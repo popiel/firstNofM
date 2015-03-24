@@ -99,7 +99,12 @@ object FirstNofM {
     val promises = Array.fill(count)(Promise[Try[T]]())
     val last = promises.last
     val completed = new java.util.concurrent.atomic.AtomicInteger(0)
-    val handler: Try[T] => Unit = { result => if (!last.isCompleted) promises(completed.getAndIncrement) success result }
+    val handler: Try[T] => Unit = { result =>
+      if (!last.isCompleted) {
+        val position = completed.getAndIncrement
+        if (position < count) promises(position) success result
+      }
+    }
     var actual = 0
     futures foreach { f => f onComplete handler; actual += 1 }
     val builder = cbf1(futures)
@@ -131,7 +136,8 @@ object FirstNofM {
     val handler: Try[T] => Unit = { result =>
       if (!enough.isCompleted) {
         if (result.isSuccess) {
-          promises(successes.getAndIncrement).success(result)
+          val position = successes.getAndIncrement
+          if (position < promises.size) promises(position).success(result)
         } else {
           val index = total - failures.incrementAndGet
           if (index < count) promises(index).success(result)
@@ -171,7 +177,8 @@ object FirstNofM {
     val handler: Try[T] => Unit = { result =>
       if (!enough.isCompleted) {
         if (predicate(result)) {
-          promises(successes.getAndIncrement).success(result)
+          val position = successes.getAndIncrement
+          if (position < promises.size) promises(position).success(result)
         } else {
           val index = total - failures.incrementAndGet
           if (index < count) promises(index).success(result)
