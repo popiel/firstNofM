@@ -9,7 +9,43 @@ import scala.util.{Random, Try, Success, Failure}
 class FirstNofMSpec extends FunSpec with Matchers {
   import ExecutionContext.Implicits.global
 
-  def standardTests(invoke: (Int, List[Future[String]]) => Future[List[Try[String]]]) {
+  def standardTestsTO(invoke: (Int, TraversableOnce[Future[String]]) => Future[TraversableOnce[Try[String]]]) {
+    it("should return the first completed futures of a list of futures") {
+      val promises = (1 to 5).map(_ => Promise[String]())
+      val futures = Random.shuffle(promises.map(_.future)).toList
+      
+      val first3 = invoke(3, futures.iterator)
+      val first4 = invoke(4, futures)
+
+      // Do this in a gross way to avoid consuming an entire thread pool
+      new Thread { override def run { (1 to 5) foreach { x => Thread.sleep(200); promises(x - 1).complete(Success("F" + x)) } } }.start
+
+      first3 should not be ('completed)
+      val r3 = Await.result(first3, 700 milliseconds)
+      r3.map{_.get}.toList should equal (List("F1", "F2", "F3"))
+
+      first4 should not be ('completed)
+      val r4 = Await.result(first4, 300 milliseconds)
+      r4.map{_.get}.toList should equal (List("F1", "F2", "F3", "F4"))
+
+      futures.find(!_.isCompleted) should not be ('empty)
+    }
+
+    it("should not block forever when asking for more futures than exist") {
+      val promises = (1 to 5).map(_ => Promise[String]())
+      val futures = Random.shuffle(promises.map(_.future)).toList
+      
+      val first15 = invoke(15, futures)
+
+      // Do this in a gross way to avoid consuming an entire thread pool
+      new Thread { override def run { (1 to 5) foreach { x => Thread.sleep(20); promises(x - 1).complete(Success("F" + x)) } } }.start
+
+      val r15 = Await.result(first15, 200 milliseconds)
+      r15.map{_.get}.toList should equal (List("F1", "F2", "F3", "F4", "F5"))
+    }
+  }
+
+  def standardTestsT(invoke: (Int, List[Future[String]]) => Future[List[Try[String]]]) {
     it("should return the first completed futures of a list of futures") {
       val promises = (1 to 5).map(_ => Promise[String]())
       val futures = Random.shuffle(promises.map(_.future)).toList
@@ -46,21 +82,21 @@ class FirstNofMSpec extends FunSpec with Matchers {
   }
 
   describe("FirstNofM.firstNofBigMem") {
-    standardTests { (n, futures) => FirstNofM.firstNofBigMem(n, futures) }
+    standardTestsT { (n, futures) => FirstNofM.firstNofBigMem(n, futures) }
   }
 
   describe("FirstNofM.firstNofQuadratic") {
-    standardTests { (n, futures) => FirstNofM.firstNofQuadratic(n, futures) }
+    standardTestsTO { (n, futures) => FirstNofM.firstNofQuadratic(n, futures) }
   }
 
   describe("FirstNofM.firstNCompletedOf") {
-    standardTests { (n, futures) => FirstNofM.firstNCompletedOf(n, futures) }
+    standardTestsTO { (n, futures) => FirstNofM.firstNCompletedOf(n, futures) }
   }
 
   describe("FirstNofMActor.firstNCompletedOf") {
     // Sloppy!  This ActorSystem is never shut down.
     implicit val system = ActorSystem("Foo")
-    standardTests { (n, futures) => FirstNofMActor.firstNCompletedOf(n, futures) }
+    standardTestsT { (n, futures) => FirstNofMActor.firstNCompletedOf(n, futures) }
   }
 
   describe("FirstNofM.firstNSuccessfulOf") {
